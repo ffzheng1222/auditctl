@@ -1,3 +1,4 @@
 
 auditctl
-.bin/*
+bin/*
+*.log
