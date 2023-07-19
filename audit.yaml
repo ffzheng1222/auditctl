@@ -1,0 +1,3 @@
+# k8s apiserver audit log file.
+logFile: "/data/k8sProject/auditctl/audit.log"
+
