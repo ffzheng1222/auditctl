@@ -6,22 +6,47 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/spf13/viper"
 )
 
 // 构建全局k8s audit record数据存储结构体
 type K8sAuditLog struct {
-	AuditID   string `json:"auditID"`
-	Stage     string `json:"stage"`
-	Verb      string `json:"verb"`
+	Kind       string `json:"kind"`
+	APIVersion string `json:"apiVersion"`
+	Level      string `json:"level"`
+	AuditID    string `json:"auditID"`
+	Stage      string `json:"stage"`
+	RequestURI string `json:"requestURI"`
+	Verb       string `json:"verb"`
+	User       struct {
+		Username string   `json:"username"`
+		Groups   []string `json:"groups"`
+	} `json:"user"`
+	SourceIPs []string `json:"sourceIPs"`
+	UserAgent string   `json:"userAgent"`
 	ObjectRef struct {
-		Resource  string `json:"resource"`
-		Namespace string `json:"namespace"`
-		Name      string `json:"name"`
+		Resource    string `json:"resource"`
+		Namespace   string `json:"namespace"`
+		Name        string `json:"name"`
+		APIVersion  string `json:"apiVersion"`
+		Subresource string `json:"subresource"`
 	} `json:"objectRef"`
+	ResponseStatus struct {
+		Metadata struct {
+		} `json:"metadata"`
+		Code int `json:"code"`
+	} `json:"responseStatus"`
+	RequestReceivedTimestamp time.Time `json:"requestReceivedTimestamp"`
+	StageTimestamp           time.Time `json:"stageTimestamp"`
+	Annotations              struct {
+		AuthorizationK8SIoDecision string `json:"authorization.k8s.io/decision"`
+		AuthorizationK8SIoReason   string `json:"authorization.k8s.io/reason"`
+	} `json:"annotations"`
 }
 
+// 全局记录k8s audit 审计日志
 var auditRecords []K8sAuditLog
 
 func NewAuditRecordArr() []K8sAuditLog {

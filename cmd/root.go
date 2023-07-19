@@ -9,7 +9,6 @@ import (
 	"github.com/spf13/viper"
 )
 
-
 var (
 	cfgFile string
 	rootCmd = &cobra.Command{
@@ -57,7 +56,7 @@ func initConfig() {
 
 	// If a config file is found, read it in.
 	if err := viper.ReadInConfig(); err == nil {
-		fmt.Fprintln(os.Stdout, "Using config file:", viper.ConfigFileUsed())
+		//fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
 	} else {
 		err = fmt.Errorf("error to open audit.yaml file with error: %s", err)
 		fmt.Printf("%s \n", err)
