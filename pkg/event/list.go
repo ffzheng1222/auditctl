@@ -1,23 +1,38 @@
 package event
 
 import (
+	"encoding/json"
 	"fmt"
+	"reflect"
 	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
 
-type AuditLogListShower struct {
-	Stage     string
-	Verb      string
-	Resource  string
-	Namespace string
-	Name      string
+var ListTableHeader = []string{"NAMESPACE", "RESOURCE", "NAME", "VERB", "STAGE"}
+var ObjectRefHeader = []string{"NAMESPACE", "RESOURCE", "NAME"}
+
+type AuditLogInfo struct {
+	allAuditLogData []map[string]AuditLogData
+}
+
+type AuditLogData struct {
+	OneColumDescribe map[string]ColumDescribe
 }
 
 type ColumDescribe struct {
 	ColumnIndex      int
+	ColumnValue      string
 	ColumnSpaceCount int
+}
+
+type ObjectRef struct {
+	Resource    string `json:"resource"`
+	Namespace   string `json:"namespace"`
+	Name        string `json:"name"`
+	APIVersion  string `json:"apiVersion"`
+	Subresource string `json:"subresource"`
 }
 
 var defaultTableWidhPind = 4
@@ -34,102 +49,165 @@ var ListCmd = &cobra.Command{
 	},
 }
 
-func initAuditLogListHeader(alListShowerArr *[]AuditLogListShower, columDescribe *map[string]ColumDescribe) {
-	// 初始化audit log list表头header
-	var auditLogListShower AuditLogListShower
-	auditLogListShower.Namespace = "NAMESPACE"
-	auditLogListShower.Resource = "RESOURCE"
-	auditLogListShower.Name = "NAME"
-	auditLogListShower.Verb = "VERB"
-	auditLogListShower.Stage = "STAGE"
-	*alListShowerArr = append(*alListShowerArr, auditLogListShower)
+func NewAuditLogInfo() *AuditLogInfo {
+	var auditLogInfo AuditLogInfo
+	oneAuditLogDataArr := make([]map[string]AuditLogData, 0)
+	oneColumDescribe := make(map[string]ColumDescribe)
 
-	(*columDescribe)["NAMESPACE"] = ColumDescribe{0, 0}
-	(*columDescribe)["RESOURCE"] = ColumDescribe{1, 0}
-	(*columDescribe)["NAME"] = ColumDescribe{2, 0}
-	(*columDescribe)["VERB"] = ColumDescribe{3, 0}
-	(*columDescribe)["STAGE"] = ColumDescribe{4, 0}
+	for inx, thName := range ListTableHeader {
+		oneColumDescribe[thName] = ColumDescribe{inx, "", 0}
+	}
+
+	auditLogInfo.allAuditLogData = oneAuditLogDataArr
+	return &auditLogInfo
+}
+
+func judgeContainRelation(orStr string, strSlice *[]string) bool {
+
+	for _, str := range *strSlice {
+		if str == orStr {
+			return true
+		}
+	}
+	return false
+}
+
+func reflectGetObjectRef(thName string, objectRef ObjectRef) (*reflect.StructField, *reflect.Value) {
+	var tf reflect.StructField
+	var tv reflect.Value
+	reflectType := reflect.TypeOf(objectRef)
+	reflectValue := reflect.ValueOf(objectRef)
+
+	for i := 0; i < reflectType.NumField(); i++ {
+		tf = reflectType.Field(i)
+
+		if ok := strings.EqualFold(thName, tf.Name); ok {
+			//fmt.Printf("*** %v \n", tf.Name)
+			tv = reflectValue.FieldByName(tf.Name)
+		}
+	}
+
+	//fmt.Printf("tonyfan3 %v\n", tv.Interface())
+	return &tf, &tv
+}
+
+func reflectGetAuditRecord(thName string, auditRecord K8sAuditLog) (*reflect.StructField, *reflect.Value) {
+	var tf reflect.StructField
+	var tv reflect.Value
+	reflectType := reflect.TypeOf(auditRecord)
+	reflectValue := reflect.ValueOf(auditRecord)
+
+	// 可以规范化处理
+	if ok := judgeContainRelation(thName, &ObjectRefHeader); ok {
+		thName = "ObjectRef"
+	}
+
+	for i := 0; i < reflectType.NumField(); i++ {
+		tf = reflectType.Field(i)
+
+		if ok := strings.EqualFold(thName, tf.Name); ok {
+			tv = reflectValue.FieldByName(tf.Name)
+		}
+	}
+
+	//fmt.Printf("tonyfan2 %v\n", tv.Interface())
+	return &tf, &tv
+}
+
+func interfaceToStruct(rfV *reflect.Value) (*ObjectRef, error) {
+	toInterface := rfV.Interface()
+	resByre, resByteErr := json.Marshal(toInterface)
+	if resByteErr != nil {
+		fmt.Printf("%v", resByteErr)
+		return nil, resByteErr
+	}
+
+	var objectRef ObjectRef
+	jsonResErr := json.Unmarshal(resByre, &objectRef)
+	if jsonResErr != nil {
+		fmt.Printf("%v", jsonResErr)
+		return nil, jsonResErr
+	}
+	//fmt.Printf("使用 json: %v \n", objectRef)
+	return &objectRef, nil
 }
 
 func listK8sAuditLog() {
-	var auditLogListShower AuditLogListShower
-	auditLogListShowerArrs := make([]AuditLogListShower, 0)
-
-	//NewAuditRecordArr 记录着全量的audio审计日志
+	//NewAuditRecordArr 记录着全量的audit审计日志
 	auditRecordarr := NewAuditRecordArr()
 
+	var auditLogData AuditLogData
 	tableColumDescribe := make(map[string]ColumDescribe)
-	initAuditLogListHeader(&auditLogListShowerArrs, &tableColumDescribe)
 
+	// 初始化audit log list表头header
+	auditLogInfo := NewAuditLogInfo()
+
+	var (
+		auditRecordValue  *reflect.Value
+		columnFieldLength int
+		columnValue       string
+	)
 	for _, auditRecord := range auditRecordarr {
-		auditLogListShower.Namespace = auditRecord.ObjectRef.Namespace
-		auditLogListShower.Resource = auditRecord.ObjectRef.Resource
-		auditLogListShower.Name = auditRecord.ObjectRef.Name
-		auditLogListShower.Verb = auditRecord.Verb
-		auditLogListShower.Stage = auditRecord.Stage
+		oneAuditLogData := make(map[string]AuditLogData, 0)
+		auditID := auditRecord.AuditID
 
-		auditLogListShowerArrs = append(auditLogListShowerArrs, auditLogListShower)
+		for inx, thName := range ListTableHeader {
+			_, auditRecordValue = reflectGetAuditRecord(thName, auditRecord)
+
+			if ok := judgeContainRelation(thName, &ObjectRefHeader); ok {
+				objectRef, err := interfaceToStruct(auditRecordValue)
+				if err != nil {
+					fmt.Printf("%v", err)
+				}
+				_, objectRefValue := reflectGetObjectRef(thName, *objectRef)
+
+				columnValue = objectRefValue.Interface().(string)
+				columnFieldLength = len(objectRefValue.Interface().(string))
+			} else {
+				columnValue = auditRecordValue.Interface().(string)
+				columnFieldLength = len(auditRecordValue.Interface().(string))
+			}
+			tableColumDescribe[thName] = ColumDescribe{inx, columnValue, columnFieldLength}
+			auditLogData.OneColumDescribe = tableColumDescribe
+		}
+		oneAuditLogData[auditID] = auditLogData
+		auditLogInfo.allAuditLogData = append(auditLogInfo.allAuditLogData, oneAuditLogData)
 	}
 
-	auditLogListPrintPrepare(&auditLogListShowerArrs, &tableColumDescribe)
-	//fmt.Printf("%v \n", tableColumDescribe)
+	fmt.Printf("%v \n", auditLogInfo)
 
-	for _, auditLogListShower := range auditLogListShowerArrs {
-		//fmt.Printf("%v \n", auditLogListShower)
-		auditLogListPrint(auditLogListShower, &tableColumDescribe)
-	}
+	auditLogListPrint(auditLogInfo)
 }
 
-func auditLogListPrintPrepare(alListShowerArr *[]AuditLogListShower, columDescribe *map[string]ColumDescribe) {
-	var index = 0
-	var nsStrWidth, resourceStrWidh, nameStrWidth, verbStrWidth, stageStrWidth int
+func auditLogListPrint(alInfo *AuditLogInfo) {
+	var nsMax, resourceMax, nameMax, verbMax, statgeMax string
+	//var printRecordInfo AuditLogData
 
-	for _, alListShower := range *alListShowerArr {
-		nsStrWidth = len(alListShower.Namespace)
-		resourceStrWidh = len(alListShower.Resource)
-		nameStrWidth = len(alListShower.Name)
-		verbStrWidth = len(alListShower.Verb)
-		stageStrWidth = len(alListShower.Stage)
+	for _, auditLogDatas := range (*alInfo).allAuditLogData {
+		for _, recordInfo := range auditLogDatas {
+			var cloumPrinter = recordInfo.OneColumDescribe
+			nsMax = strconv.Itoa(cloumPrinter["NAMESPACE"].ColumnSpaceCount)
+			resourceMax = strconv.Itoa(cloumPrinter["RESOURCE"].ColumnSpaceCount)
+			nameMax = strconv.Itoa(cloumPrinter["NAME"].ColumnSpaceCount)
+			verbMax = strconv.Itoa(cloumPrinter["VERB"].ColumnSpaceCount)
+			statgeMax = strconv.Itoa(cloumPrinter["STAGE"].ColumnSpaceCount)
 
-		if nsStrWidth > (*columDescribe)["NAMESPACE"].ColumnSpaceCount {
-			(*columDescribe)["NAMESPACE"] = ColumDescribe{0, nsStrWidth}
+			if cloumPrinter["NAMESPACE"].ColumnValue == "" {
+				var cdStrucu ColumDescribe
+				cdStrucu.ColumnIndex = cloumPrinter["NAMESPACE"].ColumnIndex
+				cdStrucu.ColumnSpaceCount = cloumPrinter["NAMESPACE"].ColumnSpaceCount
+				cdStrucu.ColumnValue = "--"
+				cloumPrinter["NAMESPACE"] = cdStrucu
+			}
+			//printRecordInfo = recordInfo
 		}
 
-		if resourceStrWidh > (*columDescribe)["RESOURCE"].ColumnSpaceCount {
-			(*columDescribe)["RESOURCE"] = ColumDescribe{1, resourceStrWidh}
-		}
+		fmt.Printf("nsMax=%s , resourceMax=%s , nameMax=%s , verbMax=%s statgeMax=%s \n",
+			nsMax, resourceMax, nameMax, verbMax, statgeMax)
 
-		if nameStrWidth > (*columDescribe)["NAME"].ColumnSpaceCount {
-			(*columDescribe)["NAME"] = ColumDescribe{2, nameStrWidth}
-		}
-
-		if verbStrWidth > (*columDescribe)["VERB"].ColumnSpaceCount {
-			(*columDescribe)["VERB"] = ColumDescribe{3, verbStrWidth}
-		}
-
-		if stageStrWidth > (*columDescribe)["STAGE"].ColumnSpaceCount {
-			(*columDescribe)["STAGE"] = ColumDescribe{4, stageStrWidth}
-		}
+		// fmt.Printf("%-"+nsMax+"s %-"+resourceMax+"s %-"+nameMax+"s %-"+verbMax+"s %-"+statgeMax+"s\n",
+		// 	printRecordInfo.OneColumDescribe["NAMESPACE"], printRecordInfo.OneColumDescribe["RESOURCE"],
+		// 	printRecordInfo.OneColumDescribe["NAME"], printRecordInfo.OneColumDescribe["VERB"],
+		// 	printRecordInfo.OneColumDescribe["STAGE"])
 	}
-
-	for key, value := range *columDescribe {
-		index = value.ColumnIndex
-		(*columDescribe)[key] = ColumDescribe{index, value.ColumnSpaceCount + defaultTableWidhPind}
-	}
-}
-
-func auditLogListPrint(aLLShower AuditLogListShower, columDescribe *map[string]ColumDescribe) {
-	if aLLShower.Namespace == "" {
-		aLLShower.Namespace = "--"
-	}
-
-	var cloumPrinter = *columDescribe
-	nsMax := strconv.Itoa(cloumPrinter["NAMESPACE"].ColumnSpaceCount)
-	resourceMax := strconv.Itoa(cloumPrinter["RESOURCE"].ColumnSpaceCount)
-	nameMax := strconv.Itoa(cloumPrinter["NAME"].ColumnSpaceCount)
-	verbMax := strconv.Itoa(cloumPrinter["VERB"].ColumnSpaceCount)
-	StatgeMax := strconv.Itoa(cloumPrinter["STAGE"].ColumnSpaceCount)
-
-	fmt.Printf("%-"+nsMax+"s %-"+resourceMax+"s %-"+nameMax+"s %-"+verbMax+"s %-"+StatgeMax+"s\n",
-		aLLShower.Namespace, aLLShower.Resource, aLLShower.Name, aLLShower.Verb, aLLShower.Stage)
 }
